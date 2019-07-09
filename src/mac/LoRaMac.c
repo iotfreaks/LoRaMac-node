@@ -1367,6 +1367,10 @@ static void HandleRadioRxErrorTimeout( LoRaMacEventInfoStatus_t rx1EventInfoStat
         }
     }
 
+    if(rx1EventInfoStatus == LORAMAC_EVENT_INFO_STATUS_RX1_ERROR)  
+    {                                                                                                                
+      MacCtx.MacFlags.Bits.MacDone = 1;                                                       
+    }
     if( classBRx == false )
     {
         if( MacCtx.RxSlot == RX_SLOT_WIN_1 )
