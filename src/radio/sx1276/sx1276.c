@@ -187,7 +187,7 @@ const FskBandwidth_t FskBandwidths[] =
 /*!
  * Radio callbacks variable
  */
-static RadioEvents_t *RadioEvents;
+/*static*/ RadioEvents_t *RadioEvents;
 
 /*!
  * Reception buffer
