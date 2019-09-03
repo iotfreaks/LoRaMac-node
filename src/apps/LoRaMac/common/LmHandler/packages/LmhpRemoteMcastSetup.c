@@ -21,22 +21,23 @@
  */
 #include "LmHandler.h"
 #include "LmhpRemoteMcastSetup.h"
+#include "TgDebug.h"
 
-#define DBG_TRACE                                   1
+//#define DBG_TRACE                                   1
 
-#if DBG_TRACE == 1
-    #include <stdio.h>
-    /*!
-     * Works in the same way as the printf function does.
-     */
-    #define DBG( ... )                               \
-        do                                           \
-        {                                            \
-            printf( __VA_ARGS__ );                   \
-        }while( 0 )
-#else
-    #define DBG( ... )
-#endif
+//#if DBG_TRACE == 1
+//    #include <stdio.h>
+//    /*!
+//     * Works in the same way as the printf function does.
+//     */
+//    #define DBG( ... )                               \
+//        do                                           \
+//        {                                            \
+//            printf( __VA_ARGS__ );                   \
+//        }while( 0 )
+//#else
+//    #define DBG( ... )
+//#endif
 
 /*!
  * LoRaWAN Application Layer Remote multicast setup Specification
@@ -46,6 +47,31 @@
 #define REMOTE_MCAST_SETUP_ID                       2
 #define REMOTE_MCAST_SETUP_VERSION                  1
 
+          
+typedef struct sLoRaMacCtx
+{
+    /*
+     * LoRaMac region.
+     */
+    LoRaMacRegion_t Region;
+    /*
+     * LoRaMac default parameters
+     */
+    LoRaMacParams_t MacParamsDefaults;
+    /*
+     * Network ID ( 3 bytes )
+     */
+    uint32_t NetID;
+    /*
+     * Mote Address
+     */
+    uint32_t DevAddr;
+    /*!
+    * Multicast channel list
+    */
+    MulticastCtx_t MulticastChannelList[LORAMAC_MAX_MC_CTX];
+}LoRaMacCtx_t;          
+          
 /*!
  * Package current context
  */
@@ -230,6 +256,29 @@ static void LmhpRemoteMcastSetupProcess( void )
     // TODO: add sessions handling
 }
 
+
+#pragma pack(push,1)
+typedef struct sMcReqGroupMask
+{
+  uint8_t ReqGroupMask4 :1;
+  uint8_t ReqGroupMask3 :1;
+  uint8_t ReqGroupMask2 :1;
+  uint8_t ReqGroupMask1 :1;
+  uint8_t rfu :4;
+}TMcReqGroupMask;
+
+typedef struct sMcGroupStatusAns
+{
+  uint8_t AnsGroupMask4  :1;
+  uint8_t AnsGroupMask3  :1;
+  uint8_t AnsGroupMask2  :1;
+  uint8_t AnsGroupMask1  :1;
+  uint8_t NbTotalGroups  :3;
+  uint8_t rfu            :1; 
+}TMcGroupStatusAns;
+
+#pragma pack(pop)
+
 static void LmhpRemoteMcastSetupOnMcpsIndication( McpsIndication_t *mcpsIndication )
 {
     uint8_t cmdIndex = 0;
@@ -248,12 +297,65 @@ static void LmhpRemoteMcastSetupOnMcpsIndication( McpsIndication_t *mcpsIndicati
             }
             case REMOTE_MCAST_SETUP_MC_GROUP_STATUS_REQ:
             {
-                // TODO implement command prosessing and handling
-                break;
+              TMcReqGroupMask* ReqGroupMask = (TMcReqGroupMask*)&mcpsIndication->Buffer[cmdIndex++];
+              TMcGroupStatusAns StatusAns;
+           
+              MibRequestConfirm_t mibReq;
+              mibReq.Type = MIB_NVM_CTXS;
+              LoRaMacMibGetRequestConfirm( &mibReq );
+              LoRaMacCtxs_t* MacContexts = mibReq.Param.Contexts;
+              LoRaMacCtx_t* Ctx = (LoRaMacCtx_t*)MacContexts->MacNvmCtx;
+
+              StatusAns.rfu = 0;
+              StatusAns.NbTotalGroups = LORAMAC_MAX_MC_CTX;
+              StatusAns.AnsGroupMask1 = ReqGroupMask->ReqGroupMask1;
+              StatusAns.AnsGroupMask2 = ReqGroupMask->ReqGroupMask2;
+              StatusAns.AnsGroupMask3 = ReqGroupMask->ReqGroupMask3;
+              StatusAns.AnsGroupMask4 = ReqGroupMask->ReqGroupMask4;
+              if(Ctx->MulticastChannelList[0].ChannelParams.Address == 0) StatusAns.AnsGroupMask1 = 0;
+              if(Ctx->MulticastChannelList[1].ChannelParams.Address == 0) StatusAns.AnsGroupMask2 = 0;
+              if(Ctx->MulticastChannelList[2].ChannelParams.Address == 0) StatusAns.AnsGroupMask3 = 0;
+              if(Ctx->MulticastChannelList[3].ChannelParams.Address == 0) StatusAns.AnsGroupMask4 = 0;
+              LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = REMOTE_MCAST_SETUP_MC_GROUP_STATUS_ANS;
+              LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = *((uint8_t*)&StatusAns);
+              if(StatusAns.AnsGroupMask1)
+              {
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = Ctx->MulticastChannelList[0].ChannelParams.GroupID;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[0].ChannelParams.Address >> 0) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[0].ChannelParams.Address >> 8) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[0].ChannelParams.Address >> 16) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[0].ChannelParams.Address >> 24) & 0xFF;
+              }
+              if(StatusAns.AnsGroupMask2)
+              {
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = Ctx->MulticastChannelList[1].ChannelParams.GroupID;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[1].ChannelParams.Address >> 0) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[1].ChannelParams.Address >> 8) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[1].ChannelParams.Address >> 16) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[1].ChannelParams.Address >> 24) & 0xFF;
+              }              
+              if(StatusAns.AnsGroupMask3)
+              {
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = Ctx->MulticastChannelList[2].ChannelParams.GroupID;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[2].ChannelParams.Address >> 0) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[2].ChannelParams.Address >> 8) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[2].ChannelParams.Address >> 16) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[2].ChannelParams.Address >> 24) & 0xFF;
+              }       
+              if(StatusAns.AnsGroupMask4)
+              {
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = Ctx->MulticastChannelList[3].ChannelParams.GroupID;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[3].ChannelParams.Address >> 0) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[3].ChannelParams.Address >> 8) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[3].ChannelParams.Address >> 16) & 0xFF;
+                LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = (Ctx->MulticastChannelList[3].ChannelParams.Address >> 24) & 0xFF;
+              }                 
+              break;
             }
             case REMOTE_MCAST_SETUP_MC_GROUP_SETUP_REQ:
             {
                 uint8_t id = mcpsIndication->Buffer[cmdIndex++];
+                if(id >= LORAMAC_MAX_MC_CTX) break;
                 McSessionData[id].McGroupData.IdHeader.Value = id;
 
                 McSessionData[id].McGroupData.McAddr =  ( mcpsIndication->Buffer[cmdIndex++] << 0  ) & 0x000000FF;
@@ -351,7 +453,7 @@ static void LmhpRemoteMcastSetupOnMcpsIndication( McpsIndication_t *mcpsIndicati
                         TimerSetValue( &SessionStartTimer, timeToSessionStart * 1000 );
                         TimerStart( &SessionStartTimer );
 
-                        DBG( "Time2SessionStart: %ld ms\r\n", timeToSessionStart * 1000 );
+                        TgDebug(DEBUG_INFO, "Remote multicast: Time2SessionStart %ld ms\r\n", timeToSessionStart * 1000 );
 
                         LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = status;
                         LmhpRemoteMcastSetupState.DataBuffer[dataBufferIndex++] = ( timeToSessionStart >> 0  ) & 0xFF;
@@ -390,21 +492,22 @@ static void LmhpRemoteMcastSetupOnMcpsIndication( McpsIndication_t *mcpsIndicati
             .Port = REMOTE_MCAST_SETUP_PORT
         };
         LmhpRemoteMcastSetupPackage.OnSendRequest( &appData, LORAMAC_HANDLER_UNCONFIRMED_MSG );
-
-        DBG( "ID          : %d\r\n", McSessionData[0].McGroupData.IdHeader.Fields.McGroupId );
-        DBG( "McAddr      : %08lX\r\n", McSessionData[0].McGroupData.McAddr );
-        DBG( "McKey       : %02X", McSessionData[0].McGroupData.McKeyEncrypted[0] );
+        
+        TgDebug(DEBUG_INFO, "Remote multicast:");
+        TgDebugRaw( "ID          : %d\r\n", McSessionData[0].McGroupData.IdHeader.Fields.McGroupId );
+        TgDebugRaw( "McAddr      : %08lX\r\n", McSessionData[0].McGroupData.McAddr );
+        TgDebugRaw( "McKey       : %02X", McSessionData[0].McGroupData.McKeyEncrypted[0] );
         for( int i = 1; i < 16; i++ )
         {
-            DBG( "-%02X",  McSessionData[0].McGroupData.McKeyEncrypted[i] );
+            TgDebugRaw( "-%02X",  McSessionData[0].McGroupData.McKeyEncrypted[i] );
         }
-        DBG( "\r\n" );
-        DBG( "McFCountMin : %lu\r\n",  McSessionData[0].McGroupData.McFCountMin );
-        DBG( "McFCountMax : %lu\r\n",  McSessionData[0].McGroupData.McFCountMax );
-        DBG( "SessionTime : %lu\r\n",  McSessionData[0].SessionTime );
-        DBG( "SessionTimeT: %d\r\n",  McSessionData[0].SessionTimeout );
-        DBG( "Rx Freq     : %lu\r\n", McSessionData[0].RxParams.ClassC.Frequency );
-        DBG( "Rx DR       : DR_%d\r\n", McSessionData[0].RxParams.ClassC.Datarate );
+        TgDebugRaw( "\r\n" );
+        TgDebugRaw( "McFCountMin : %lu\r\n",  McSessionData[0].McGroupData.McFCountMin );
+        TgDebugRaw( "McFCountMax : %lu\r\n",  McSessionData[0].McGroupData.McFCountMax );
+        TgDebugRaw( "SessionTime : %lu\r\n",  McSessionData[0].SessionTime );
+        TgDebugRaw( "SessionTimeT: %d\r\n",  McSessionData[0].SessionTimeout );
+        TgDebugRaw( "Rx Freq     : %lu\r\n", McSessionData[0].RxParams.ClassC.Frequency );
+        TgDebugRaw( "Rx DR       : DR_%d\r\n", McSessionData[0].RxParams.ClassC.Datarate );
 
     }
 }
